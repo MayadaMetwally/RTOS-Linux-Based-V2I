@@ -1,7 +1,40 @@
+/*
+ *  SLAMTEC LIDAR
+ *  Ultra Simple Data Grabber Demo App
+ *
+ *  Copyright (c) 2009 - 2014 RoboPeak Team
+ *  http://www.robopeak.com
+ *  Copyright (c) 2014 - 2020 Shanghai Slamtec Co., Ltd.
+ *  http://www.slamtec.com
+ *
+ */
+/*
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+
+#include <wiringPi.h>
+#include <wiringSerial.h>
+
 
 #include "sl_lidar.h" 
 #include "sl_lidar_driver.h"
@@ -14,7 +47,7 @@
 #define delay(x)   ::Sleep(x)
 #else
 #include <unistd.h>
-static inline void delay(sl_word_size_t ms){
+static inline void fs_delay(sl_word_size_t ms){
     while (ms>=1000){
         usleep(1000*1000);
         ms-=1000;
@@ -80,6 +113,24 @@ int main(int argc, const char * argv[]) {
 
     IChannel* _channel;
 
+    int fd ;
+    int count ;
+    unsigned int nextTime ;
+
+    if ((fd = serialOpen ("/dev/ttyUSB0", 9600)) < 0)
+    {
+        fprintf (stderr, "Unable to open serial device: %s\n", strerror (errno)) ;
+        return 1 ;
+    }
+
+    if (wiringPiSetup () == -1)
+    {
+        fprintf (stdout, "Unable to start wiringPi: %s\n", strerror (errno)) ;
+        return 1 ;
+    }
+
+
+
     printf("Ultra simple LIDAR data grabber for SLAMTEC LIDAR.\n"
            "Version: %s\n", SL_LIDAR_SDK_VERSION);
 
@@ -138,7 +189,7 @@ int main(int argc, const char * argv[]) {
 	}
 
     
-
+    // create the driver instance
 	ILidarDriver * drv = *createLidarDriver();
 
     if (!drv) {
@@ -212,7 +263,7 @@ int main(int argc, const char * argv[]) {
         goto on_finished;
     }
 
-
+    // print out the device serial number, firmware and hardware version number..
     printf("SLAMTEC LIDAR S/N: ");
     for (int pos = 0; pos < 16 ;++pos) {
         printf("%02X", devinfo.serialnum[pos]);
@@ -227,7 +278,7 @@ int main(int argc, const char * argv[]) {
 
 
 
-
+    // check health...
     if (!checkSLAMTECLIDARHealth(drv)) {
         goto on_finished;
     }
@@ -236,10 +287,12 @@ int main(int argc, const char * argv[]) {
     
 	if(opt_channel_type == CHANNEL_TYPE_SERIALPORT)
         drv->setMotorSpeed();
-
+    // start scan...
     drv->startScan(0,1);
 
-
+    int previous = 0;
+    int safe    = 0;
+    // fetech result and print it out...
     while (1) {
         sl_lidar_response_measurement_node_hq_t nodes[8192];
         size_t   count = _countof(nodes);
@@ -252,8 +305,26 @@ int main(int argc, const char * argv[]) {
                 printf("%s theta: %03.2f Dist: %08.2f Q: %d \n", 
                     (nodes[pos].flag & SL_LIDAR_RESP_HQ_FLAG_SYNCBIT) ?"S ":"  ", 
                     (nodes[pos].angle_z_q14 * 90.f) / 16384.f,
-                    nodes[pos].dist_mm_q2/ 10.f / (1 << 2),
+                    nodes[pos].dist_mm_q2/10.0 / (1 << 2),
                     nodes[pos].quality >> SL_LIDAR_RESP_MEASUREMENT_QUALITY_SHIFT);
+                    if(((nodes[pos].angle_z_q14 * 90.f) / 16384.f ) > 10 && ((nodes[pos].angle_z_q14 * 90.f) / 16384.f ) < 170 &&  (nodes[pos].dist_mm_q2/10.0 / (1 << 2)) !=0)
+                    {
+
+                        if ((nodes[pos].dist_mm_q2/10.0 / (1 << 2))  < 100 && previous != (nodes[pos].dist_mm_q2/10.0 / (1 << 2)))
+                        {
+                            serialPuts(fd,"C"); 
+                            previous = (nodes[pos].dist_mm_q2/10.0 / (1 << 2));
+                        }
+                        else if((nodes[pos].dist_mm_q2/10.0 / (1 << 2)) > 120 && safe != (nodes[pos].dist_mm_q2/10.0 / (1 << 2)) )
+                        {
+                            serialPuts(fd,"D"); 
+                            safe = (nodes[pos].dist_mm_q2/10.0 / (1 << 2));
+                        }
+                        else
+                        {
+                            /** No thing */
+                        }
+                    }
             }
         }
 
@@ -263,10 +334,11 @@ int main(int argc, const char * argv[]) {
     }
 
     drv->stop();
-	delay(200);
+	fs_delay(200);
+    
 	if(opt_channel_type == CHANNEL_TYPE_SERIALPORT)
         drv->setMotorSpeed(0);
- 
+    // done!
 on_finished:
     if(drv) {
         delete drv;
