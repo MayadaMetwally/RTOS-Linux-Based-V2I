@@ -8,6 +8,6 @@
 #ifndef INC_ULTRASONIC_H_
 #define INC_ULTRASONIC_H_
 
-void HCSR04_Read (GPIO_TypeDef* Port, uint16_t Pin,TIM_HandleTypeDef* htim);
+void HCSR04_Read (GPIO_TypeDef* Port, uint16_t Pin,TIM_HandleTypeDef* htim,uint8_t Channel);
 
 #endif /* INC_ULTRASONIC_H_ */
